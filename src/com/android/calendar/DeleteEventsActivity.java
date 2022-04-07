@@ -47,12 +47,15 @@ import android.provider.CalendarContract;
 import android.provider.CalendarContract.Calendars;
 import android.provider.CalendarContract.Events;
 import android.provider.CalendarContract.EventsEntity;
+import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.util.Log;
+import android.view.ActionMode;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.AbsListView;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.ListView;
@@ -71,7 +74,7 @@ import java.util.List;
 import java.util.Map;
 
 public class DeleteEventsActivity extends ListActivity
-    implements LoaderManager.LoaderCallbacks<Cursor>, OnMenuItemClickListener {
+        implements LoaderManager.LoaderCallbacks<Cursor>, OnMenuItemClickListener {
 
     private static final String TAG = "DeleteEvents";
     private static final boolean DEBUG = false;
@@ -99,11 +102,14 @@ public class DeleteEventsActivity extends ListActivity
         Calendars.CALENDAR_DISPLAY_NAME,
     };
 
+    private ActionMode mActionMode;
     private ListView mListView;
     private EventListAdapter mAdapter;
     private AsyncQueryService mService;
     private TextView mHeaderTextView;
     private Button mSelectionButton;
+
+    private boolean mIgnoreSelections = false;
 
     private Map<Long, Long> mSelectedMap = new HashMap<Long, Long>();
     private Map<Long, String> mCalendarsMap = new HashMap<Long, String>();
@@ -147,6 +153,8 @@ public class DeleteEventsActivity extends ListActivity
 
         mAdapter = new EventListAdapter(this, R.layout.event_list_item);
         mListView.setAdapter(mAdapter);
+        mListView.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE_MODAL);
+        mListView.setMultiChoiceModeListener(mMultiChoiceModeListener);
 
         mService = new AsyncQueryService(this) {
             @Override
@@ -294,6 +302,93 @@ public class DeleteEventsActivity extends ListActivity
         mAdapter.swapCursor(null);
     }
 
+    private AbsListView.MultiChoiceModeListener mMultiChoiceModeListener
+            = new AbsListView.MultiChoiceModeListener() {
+
+        @Override
+        public void onItemCheckedStateChanged(ActionMode mode, int position,
+                                              long id, boolean checked) {
+            // We're updating selections manually ignore changes
+            if (mIgnoreSelections) {
+                return;
+            }
+            int firstVisiblePosition = mListView.getFirstVisiblePosition();
+            int actualPosition = position - firstVisiblePosition;
+
+            if (DEBUG) {
+                Log.i(TAG, "position , firstVisiblePosition, actualPosition : "
+                        + position + " " + firstVisiblePosition + " " + actualPosition);
+            }
+
+            View v = mListView.getChildAt(actualPosition);
+            CheckBox checkbox = (CheckBox) v.findViewById(R.id.checkbox);
+            checkbox.toggle();
+
+            if (checkbox.isChecked()) {
+                mSelectedMap.put(id, id);
+            } else {
+                mSelectedMap.remove(id);
+            }
+            updateTitle();
+        }
+
+        @Override
+        public boolean onCreateActionMode(ActionMode mode, Menu menu) {
+            mode.getMenuInflater().inflate(R.menu.delete_events_title_bar, menu);
+            mActionMode = mode;
+            return true;
+        }
+
+        @Override
+        public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
+            switch (item.getItemId()) {
+                case R.id.action_delete:
+                    if (DEBUG) Log.d(TAG, "Action: Delete");
+                    if (mSelectedMap.size() > 0) {
+                        CharSequence message = mSelectedMap.size() == mEventList.size() ?
+                                getResources().getText(R.string.evt_del_dlg_msg_all) :
+                                getResources().getText(R.string.evt_del_dlg_msg_selected);
+                        CharSequence title = getResources().getText(R.string.evt_del_dlg_title);
+                        DeleteDialogFragment dlgFrag = DeleteDialogFragment.newInstance(
+                                title.toString(), message.toString());
+                        dlgFrag.show(getFragmentManager(), "dialog");
+                    } else {
+                        Toast.makeText(DeleteEventsActivity.this,
+                                mEventList.size() > 0 ? R.string.no_events_selected
+                                : R.string.no_events, Toast.LENGTH_SHORT).show();
+                    }
+                    return true;
+                case R.id.select_all_check:
+                    mIgnoreSelections = true;
+                    if (item.isChecked()) {
+                        selectNone();
+                    } else {
+                        selectAll();
+                    }
+                    mIgnoreSelections = false;
+                    invalidateOptionsMenu();
+                    return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void onDestroyActionMode(ActionMode mode) {
+            mListView.clearChoices();
+            mSelectedMap.clear();
+            mActionMode = null;
+        }
+
+        @Override
+        public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
+            // Here you can perform updates to the CAB due to
+            // an invalidate() request
+            MenuItem selectAllItem = menu.findItem(R.id.select_all_check);
+            selectAllItem.setChecked(mSelectedMap.size() == mEventList.size());
+            return true;
+        }
+    };
+
     private final class EventListAdapter extends ResourceCursorAdapter {
         public EventListAdapter(Context context, int layout) {
             super(context, layout, null);
@@ -315,12 +410,15 @@ public class DeleteEventsActivity extends ListActivity
             // if DTEND invalid, check for duration
             if (end == 0) {
                 String durationStr = cursor.getString(cursor.getColumnIndex(Events.DURATION));
-                Duration duration = new Duration();
-                try {
-                    duration.parse(durationStr);
-                    end = start + duration.getMillis();
-                } catch (DateException e) {
-                    Log.w(TAG, e.getLocalizedMessage());
+                if (!TextUtils.isEmpty(durationStr)) {
+                    Duration duration = new Duration();
+
+                    try {
+                        duration.parse(durationStr);
+                        end = start + duration.getMillis();
+                    } catch (DateException e) {
+                        Log.w(TAG, e.getLocalizedMessage());
+                    }
                 }
             }
             if (DEBUG) Log.v(TAG,
@@ -352,8 +450,11 @@ public class DeleteEventsActivity extends ListActivity
     }
 
     private void updateTitle() {
-        mSelectionButton.setText(" " + mSelectedMap.size() + " " +
-                getResources().getText(R.string.selected));
+        if (mActionMode != null) {
+            mActionMode.setTitle(getString(R.string.events_delete));
+            mActionMode.setSubtitle(getResources().getQuantityString(R.plurals.events_selected,
+                        mSelectedMap.size(), mSelectedMap.size()));
+        }
     }
 
     void onPositiveButtonSelected() {
@@ -372,10 +473,16 @@ public class DeleteEventsActivity extends ListActivity
                 where.toString(), null, 0);
         mSelectedMap.clear();
         updateTitle();
+
+        if (mActionMode != null) {
+            mActionMode.finish();
+        }
     }
 
     void onNegativeButtonSelected() {
-
+        if (mActionMode != null) {
+            mActionMode.finish();
+        }
     }
 
     public static class DeleteDialogFragment extends DialogFragment {

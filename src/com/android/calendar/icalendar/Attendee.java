@@ -1,17 +1,35 @@
+<<<<<<< HEAD
 /**
  * Copyright (C) 2014 The CyanogenMod Project
+=======
+/*
+ * Copyright (C) 2014-2016 The CyanogenMod Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+>>>>>>> 4f89b710770a88c8e0e3b592d731cdb3b1681692
  */
 
 package com.android.calendar.icalendar;
 
 import java.util.HashMap;
+import java.util.ListIterator;
 
 /**
  * Models the Attendee component of a calendar event
  */
 public class Attendee {
 
-    // property strings
+    // Property strings
     // TODO: only a partial list of attributes have been implemented, implement the rest
     public static String CN = "CN";                 // Attendee Name
     public static String PARTSTAT = "PARTSTAT";     // Participant Status (Attending , Declined .. )
@@ -21,7 +39,7 @@ public class Attendee {
 
 
     private static HashMap<String, Integer> sPropertyList = new HashMap<String, Integer>();
-    // initialize the approved list of mProperties for a calendar event
+    // Initialize the approved list of mProperties for a calendar event
     static {
         sPropertyList.put(CN,1);
         sPropertyList.put(PARTSTAT, 1);
@@ -30,7 +48,7 @@ public class Attendee {
         sPropertyList.put(CUTYPE, 1);
     }
 
-    public HashMap<String, String> mProperties;     // stores (property, value) pairs
+    public HashMap<String, String> mProperties;     // Stores (property, value) pairs
     public String mEmail;
 
     public Attendee() {
@@ -62,8 +80,8 @@ public class Attendee {
 
         // Add Event mProperties
         output.append("ATTENDEE;");
-        for (String property : mProperties.keySet() ) {
-            // append properties in the following format: attribute=value;
+        for (String property : mProperties.keySet()) {
+            // Append properties in the following format: attribute=value;
             output.append(property + "=" + mProperties.get(property) + ";");
         }
         output.append("X-NUM-GUESTS=0:mailto:" + mEmail);
@@ -74,4 +92,12 @@ public class Attendee {
         return output.toString();
     }
 
+    public void populateFromEntries(ListIterator<String> iter) {
+        String line = iter.next();
+        if (line.contains("ATTENDEE")) {
+            String entry = VEvent.parseTillNextAttribute(iter, line);
+            String[] entries = entry.split("X-NUM-GUESTS=0:mailto:");
+            mEmail = entries[1];
+        }
+    }
 }

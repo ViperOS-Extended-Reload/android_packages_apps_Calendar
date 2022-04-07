@@ -1,11 +1,24 @@
-/**
- * Copyright (C) 2014 The CyanogenMod Project
+/*
+ * Copyright (C) 2014-2016 The CyanogenMod Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package com.android.calendar.icalendar;
 
 import java.util.HashMap;
 import java.util.LinkedList;
+import java.util.ListIterator;
 import java.util.UUID;
 
 /**
@@ -13,7 +26,7 @@ import java.util.UUID;
  */
 public class VEvent {
 
-    // valid property identifiers for an event component
+    // Valid property identifiers for an event component
     // TODO: only a partial list of attributes has been implemented, implement the rest
     public static String CLASS = "CLASS";
     public static String CREATED = "CREATED";
@@ -33,10 +46,10 @@ public class VEvent {
     public static String ATTENDEE = "ATTENDEE";
     public static String CATEGORIES = "CATEGORIES";
 
-    // stores the -arity of the attributes that this component can have
+    // Stores the -arity of the attributes that this component can have
     private static HashMap<String, Integer> sPropertyList = new HashMap<String, Integer>();
 
-    // initialize the approved list of mProperties for a calendar event
+    // Initialize the approved list of mProperties for a calendar event
     static {
         sPropertyList.put(CLASS,1);
         sPropertyList.put(CREATED,1);
@@ -59,7 +72,7 @@ public class VEvent {
         sPropertyList.put(CATEGORIES, Integer.MAX_VALUE);
     }
 
-    // stores attributes and their corresponding values belonging to the Event component
+    // Stores attributes and their corresponding values belonging to the Event component
     public HashMap<String, String> mProperties;
 
     public LinkedList<Attendee> mAttendees;
@@ -72,7 +85,7 @@ public class VEvent {
         mProperties = new HashMap<String, String>();
         mAttendees = new LinkedList<Attendee>();
 
-        // generate and add a unique identifier to this event - ical requisite
+        // Generate and add a unique identifier to this event - iCal requisite
         addProperty(UID , UUID.randomUUID().toString() + "@cyanogenmod.com");
         addTimeStamp();
     }
@@ -85,7 +98,7 @@ public class VEvent {
      * @return
      */
     public boolean addProperty(String property, String value) {
-        // only unary-properties for now
+        // Only unary-properties for now
         if (sPropertyList.containsKey(property) && sPropertyList.get(property) == 1 &&
                 value != null) {
             mProperties.put(property, IcalendarUtils.cleanseString(value));
@@ -95,7 +108,7 @@ public class VEvent {
     }
 
     /**
-     * returns the value of the requested event property or null if there isn't one
+     * Returns the value of the requested event property or null if there isn't one
      */
     public String getProperty(String property) {
         return mProperties.get(property);
@@ -163,7 +176,7 @@ public class VEvent {
 
         sb.append(mOrganizer.getICalFormattedString());
 
-        // add event Attendees
+        // Add event Attendees
         for (Attendee attendee : mAttendees) {
             sb.append(attendee.getICalFormattedString());
         }
@@ -171,6 +184,49 @@ public class VEvent {
         sb.append("END:VEVENT\n");
 
         return sb.toString();
+    }
+
+    public void populateFromEntries(ListIterator<String> iter) {
+        while (iter.hasNext()) {
+            String line = iter.next();
+            if (line.contains("BEGIN:VEVENT")) {
+                // Continue
+            } else if (line.startsWith("END:EVENT")) {
+                break;
+            } else if (line.startsWith("ORGANIZER")) {
+                String entry = parseTillNextAttribute(iter, line);
+                mOrganizer = Organizer.populateFromICalString(entry);
+            } else if (line.startsWith("ATTENDEE")) {
+                // Go one previous, so VEvent, parses current line
+                iter.previous();
+
+                // Offload to Attendee for parsing
+                Attendee attendee = new Attendee();
+                attendee.populateFromEntries(iter);
+                mAttendees.add(attendee);
+            } else if (line.contains(":")) {
+                String entry = parseTillNextAttribute(iter, line);
+                int indexOfFirstColon = entry.indexOf(":");
+                String key = entry.substring(0, indexOfFirstColon);
+                String value = entry.substring(indexOfFirstColon + 1);
+                mProperties.put(key, value);
+            }
+        }
+    }
+
+    public static String parseTillNextAttribute(ListIterator<String> iter, String currentLine) {
+        StringBuilder parse = new StringBuilder();
+        parse.append(currentLine);
+        while (iter.hasNext()) {
+            String line = iter.next();
+            if (line.startsWith(" ")) {
+                parse.append(line.replaceFirst(" ", ""));
+            } else {
+                iter.previous();
+                break;
+            }
+        }
+        return parse.toString();
     }
 
 }

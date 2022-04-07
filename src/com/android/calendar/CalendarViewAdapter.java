@@ -32,9 +32,12 @@ import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.TextView;
 
+import java.text.SimpleDateFormat;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.Formatter;
 import java.util.Locale;
+import java.util.TimeZone;
 
 
 /*
@@ -67,6 +70,7 @@ public class CalendarViewAdapter extends BaseAdapter {
     public static final int WEEK_BUTTON_INDEX = 1;
     public static final int MONTH_BUTTON_INDEX = 2;
     public static final int AGENDA_BUTTON_INDEX = 3;
+    public static final int YEAR_BUTTON_INDEX = 4;
 
     // The current selected event's time, used to calculate the date and day of the week
     // for the buttons.
@@ -106,7 +110,7 @@ public class CalendarViewAdapter extends BaseAdapter {
         mShowDate = showDate;
 
         // Initialize
-        mButtonNames = context.getResources().getStringArray(R.array.buttons_list);
+        mButtonNames = context.getResources().getStringArray(R.array.buttons_list_cm);
         mInflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
         mStringBuilder = new StringBuilder(50);
         mFormatter = new Formatter(mStringBuilder, Locale.getDefault());
@@ -226,13 +230,15 @@ public class CalendarViewAdapter extends BaseAdapter {
                     break;
                 case ViewType.WEEK:
                     lunarInfo.setVisibility(View.GONE);
+                    weekDay.setVisibility(View.VISIBLE);
                     if (Utils.getShowWeekNumber(mContext)) {
-                        weekDay.setVisibility(View.VISIBLE);
-                        weekDay.setText(buildWeekNum());
+                        int weekNum = Utils.getWeekNumberFromTime(mMilliTime, mContext);
+                        weekDay.setText(mContext.getString(R.string.week_of_year,
+                                weekNum, buildYearDate()));
                     } else {
-                        weekDay.setVisibility(View.GONE);
+                        weekDay.setText(buildYearDate());
                     }
-                    date.setText(buildMonthYearDate());
+                    date.setText(buildWeekDate());
                     break;
                 case ViewType.MONTH:
                     weekDay.setVisibility(View.GONE);
@@ -244,6 +250,11 @@ public class CalendarViewAdapter extends BaseAdapter {
                     lunarInfo.setVisibility(View.GONE);
                     weekDay.setText(buildDayOfWeek());
                     date.setText(buildFullDate());
+                    break;
+                case ViewType.YEAR:
+                    weekDay.setVisibility(View.GONE);
+                    lunarInfo.setVisibility(View.GONE);
+                    date.setText(buildYearDate());
                     break;
                 default:
                     v = null;
@@ -270,6 +281,9 @@ public class CalendarViewAdapter extends BaseAdapter {
                     break;
                 case ViewType.MONTH:
                     title.setText(mButtonNames [MONTH_BUTTON_INDEX]);
+                    break;
+                case ViewType.YEAR:
+                    title.setText(mButtonNames [YEAR_BUTTON_INDEX]);
                     break;
                 case ViewType.AGENDA:
                     title.setText(mButtonNames [AGENDA_BUTTON_INDEX]);
@@ -326,6 +340,12 @@ public class CalendarViewAdapter extends BaseAdapter {
                 viewType.setText(mButtonNames [AGENDA_BUTTON_INDEX]);
                 if (mShowDate) {
                     date.setText(buildMonthDayDate());
+                }
+                break;
+            case YEAR_BUTTON_INDEX:
+                viewType.setText(mButtonNames [YEAR_BUTTON_INDEX]);
+                if (mShowDate) {
+                    date.setText(buildYearDate());
                 }
                 break;
             default:
@@ -392,6 +412,12 @@ public class CalendarViewAdapter extends BaseAdapter {
         String date = DateUtils.formatDateRange(mContext, mFormatter, mMilliTime, mMilliTime,
                 DateUtils.FORMAT_SHOW_DATE | DateUtils.FORMAT_SHOW_YEAR, mTimeZone).toString();
         return date;
+    }
+
+    private String buildYearDate() {
+        SimpleDateFormat yearFormat = new SimpleDateFormat("yyyy");
+        yearFormat.setTimeZone(TimeZone.getTimeZone(mTimeZone));
+        return yearFormat.format(new Date(mMilliTime));
     }
 
     private String buildMonthYearDate() {
@@ -461,10 +487,8 @@ public class CalendarViewAdapter extends BaseAdapter {
          return date;
     }
 
-    private String buildWeekNum() {
-        int week = Utils.getWeekNumberFromTime(mMilliTime, mContext);
-        return mContext.getResources().getQuantityString(R.plurals.weekN, week, week);
-    }
+    private void buildLunarInfo() {
+        if (mLunarLoader == null || TextUtils.isEmpty(mTimeZone)) return;
 
     private void buildLunarInfo() {
         if (mLunarLoader == null || TextUtils.isEmpty(mTimeZone)) return;
@@ -490,6 +514,5 @@ public class CalendarViewAdapter extends BaseAdapter {
                     to.get(Calendar.DAY_OF_MONTH));
         }
     }
-
 }
 

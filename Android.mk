@@ -30,8 +30,8 @@ LOCAL_STATIC_JAVA_LIBRARIES := \
         android-opt-datetimepicker \
         android-opt-timezonepicker \
         android-support-v4 \
-        calendar-common \
-        android-support-v7-appcompat
+        android-support-v13 \
+        calendar-common
 
 LOCAL_SDK_VERSION := current
 

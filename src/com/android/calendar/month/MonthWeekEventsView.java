@@ -16,6 +16,7 @@
 
 package com.android.calendar.month;
 
+import com.android.calendar.CalendarViewAdapter;
 import com.android.calendar.Event;
 import com.android.calendar.LunarUtils;
 import com.android.calendar.R;
@@ -727,6 +728,7 @@ public class MonthWeekEventsView extends SimpleWeekView {
                 // adjust the year and month
                 int year = time.year;
                 int month = time.month;
+                int defalutColor = mMonthNumPaint.getColor();
                 int julianMondayDay = time.monthDay;
                 int monthDay = Integer.parseInt(mDayNumbers[i]);
                 if (monthDay != julianMondayDay) {
@@ -750,6 +752,7 @@ public class MonthWeekEventsView extends SimpleWeekView {
                 LunarUtils.get(getContext(), year, month, monthDay,
                         LunarUtils.FORMAT_LUNAR_SHORT | LunarUtils.FORMAT_MULTI_FESTIVAL, false,
                         infos);
+                boolean isChineseFestival = LunarUtils.isChineseFestival(year, month, monthDay);
                 if (infos.size() > 0) {
                     float originalTextSize = mMonthNumPaint.getTextSize();
                     mMonthNumPaint.setTextSize(TEXT_SIZE_LUNAR);
@@ -770,8 +773,14 @@ public class MonthWeekEventsView extends SimpleWeekView {
                             infoX = x;
                             infoY = y + (mMonthNumHeight + LUNAR_PADDING_LUNAR) * (num + 1);
                         }
+
+                        if (isChineseFestival) {
+                            mMonthNumPaint.setColor(getContext().getResources()
+                                    .getColor(R.color.green));
+                        }
                         canvas.drawText(info, infoX, infoY, mMonthNumPaint);
-                        num = num + 1;
+                        ++num;
+                        mMonthNumPaint.setColor(defalutColor);
                     }
 
                     // restore the text size.

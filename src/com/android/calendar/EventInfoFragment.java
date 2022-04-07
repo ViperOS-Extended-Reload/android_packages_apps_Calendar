@@ -48,6 +48,7 @@ import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.CalendarContract;
 import android.provider.CalendarContract.Attendees;
 import android.provider.CalendarContract.Calendars;
@@ -136,6 +137,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
     protected static final String BUNDLE_KEY_END_MILLIS = "key_end_millis";
     protected static final String BUNDLE_KEY_IS_DIALOG = "key_fragment_is_dialog";
     protected static final String BUNDLE_KEY_DELETE_DIALOG_VISIBLE = "key_delete_dialog_visible";
+    protected static final String BUNDLE_KEY_DELETE_DIALOG_CHOICE = "key_delete_dialog_choice";
     protected static final String BUNDLE_KEY_WINDOW_STYLE = "key_window_style";
     protected static final String BUNDLE_KEY_CALENDAR_COLOR = "key_calendar_color";
     protected static final String BUNDLE_KEY_CALENDAR_COLOR_INIT = "key_calendar_color_init";
@@ -183,6 +185,14 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
     private static final int TOKEN_QUERY_ALL = TOKEN_QUERY_DUPLICATE_CALENDARS
             | TOKEN_QUERY_ATTENDEES | TOKEN_QUERY_CALENDARS | TOKEN_QUERY_EVENT
             | TOKEN_QUERY_REMINDERS | TOKEN_QUERY_VISIBLE_CALENDARS | TOKEN_QUERY_COLORS;
+
+    public static final File EXPORT_SDCARD_DIRECTORY = new File(
+            Environment.getExternalStorageDirectory(), "CalendarEvents");
+
+    private enum ShareType {
+        SDCARD,
+        INTENT
+    }
 
     private int mCurrentQuery = 0;
 
@@ -338,6 +348,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
     private int mNumOfAttendees;
     private EditResponseHelper mEditResponseHelper;
     private boolean mDeleteDialogVisible = false;
+    private int mDeleteDialogChoice = -1;
     private DeleteEventHelper mDeleteHelper;
 
     private int mOriginalAttendeeResponse;
@@ -416,6 +427,10 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
 
     private QueryHandler mHandler;
 
+    // Used to signal the completion of querying calendar event data
+    // Note: Runnable is executed on the UI thread
+    private Runnable mQueryCompleteRunnable;
+
     private final Runnable mTZUpdater = new Runnable() {
         @Override
         public void run() {
@@ -452,6 +467,8 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
 
     private CalendarController mController;
 
+    private boolean mInNonUiMode;
+
     private class QueryHandler extends AsyncQueryService {
         public QueryHandler(Context context) {
             super(context);
@@ -460,7 +477,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
         @Override
         protected void onQueryComplete(int token, Object cookie, Cursor cursor) {
             // if the activity is finishing, then close the cursor and return
-            final Activity activity = getActivity();
+            final Activity activity = (mActivity != null) ? mActivity : getActivity();
             if (activity == null || activity.isFinishing()) {
                 if (cursor != null) {
                     cursor.close();
@@ -506,9 +523,10 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
             case TOKEN_QUERY_CALENDARS:
                 mCalendarsCursor = Utils.matrixCursorFromCursor(cursor);
                 updateCalendar(mView);
-                // FRAG_TODO fragments shouldn't set the title anymore
-                updateTitle();
-
+                if (!mInNonUiMode) {
+                    // FRAG_TODO fragments shouldn't set the title anymore
+                    updateTitle();
+                }
                 args = new String[] {
                         mCalendarsCursor.getString(CALENDARS_INDEX_ACCOUNT_NAME),
                         mCalendarsCursor.getString(CALENDARS_INDEX_ACCOUNT_TYPE) };
@@ -524,7 +542,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
                     startQuery(TOKEN_QUERY_ATTENDEES, null, uri, ATTENDEES_PROJECTION,
                             ATTENDEES_WHERE, args, ATTENDEES_SORT_ORDER);
                 } else {
-                    sendAccessibilityEventIfQueryDone(TOKEN_QUERY_ATTENDEES);
+                    assessQueryCompletion(TOKEN_QUERY_ATTENDEES);
                 }
                 if (mHasAlarm) {
                     // start reminders query
@@ -533,10 +551,11 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
                     startQuery(TOKEN_QUERY_REMINDERS, null, uri,
                             REMINDERS_PROJECTION, REMINDERS_WHERE, args, null);
                 } else {
-                    sendAccessibilityEventIfQueryDone(TOKEN_QUERY_REMINDERS);
+                    assessQueryCompletion(TOKEN_QUERY_REMINDERS);
                 }
                 break;
             case TOKEN_QUERY_COLORS:
+                if (mInNonUiMode) break;
                 ArrayList<Integer> colors = new ArrayList<Integer>();
                 if (cursor.moveToFirst()) {
                     do
@@ -573,11 +592,11 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
             case TOKEN_QUERY_ATTENDEES:
                 mAttendeesCursor = Utils.matrixCursorFromCursor(cursor);
                 initAttendeesCursor(mView);
-                updateResponse(mView);
+                if (!mInNonUiMode) updateResponse(mView);
                 break;
             case TOKEN_QUERY_REMINDERS:
                 mRemindersCursor = Utils.matrixCursorFromCursor(cursor);
-                initReminders(mView, mRemindersCursor);
+                if (!mInNonUiMode) initReminders(mView, mRemindersCursor);
                 break;
             case TOKEN_QUERY_VISIBLE_CALENDARS:
                 if (cursor.getCount() > 1) {
@@ -590,34 +609,38 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
                 } else {
                     // Don't need to display the calendar owner when there is only a single
                     // calendar.  Skip the duplicate calendars query.
-                    setVisibilityCommon(mView, R.id.calendar_container, View.GONE);
+                    if (!mInNonUiMode) {
+                        setVisibilityCommon(mView, R.id.calendar_container, View.GONE);
+                    }
                     mCurrentQuery |= TOKEN_QUERY_DUPLICATE_CALENDARS;
                 }
                 break;
             case TOKEN_QUERY_DUPLICATE_CALENDARS:
-                SpannableStringBuilder sb = new SpannableStringBuilder();
+                if (!mInNonUiMode) {
+                    SpannableStringBuilder sb = new SpannableStringBuilder();
 
-                // Calendar display name
-                String calendarName = mCalendarsCursor.getString(CALENDARS_INDEX_DISPLAY_NAME);
-                sb.append(calendarName);
+                    // Calendar display name
+                    String calendarName = mCalendarsCursor.getString(CALENDARS_INDEX_DISPLAY_NAME);
+                    sb.append(calendarName);
 
-                // Show email account if display name is not unique and
-                // display name != email
-                String email = mCalendarsCursor.getString(CALENDARS_INDEX_OWNER_ACCOUNT);
-                if (cursor.getCount() > 1 && !calendarName.equalsIgnoreCase(email) &&
-                        Utils.isValidEmail(email)) {
-                    sb.append(" (").append(email).append(")");
+                    // Show email account if display name is not unique and
+                    // display name != email
+                    String email = mCalendarsCursor.getString(CALENDARS_INDEX_OWNER_ACCOUNT);
+                    if (cursor.getCount() > 1 && !calendarName.equalsIgnoreCase(email) &&
+                            Utils.isValidEmail(email)) {
+                        sb.append(" (").append(email).append(")");
+                    }
+
+                    setVisibilityCommon(mView, R.id.calendar_container, View.VISIBLE);
+                    setTextCommon(mView, R.id.calendar_name, sb);
                 }
-
-                setVisibilityCommon(mView, R.id.calendar_container, View.VISIBLE);
-                setTextCommon(mView, R.id.calendar_name, sb);
                 break;
             }
             cursor.close();
-            sendAccessibilityEventIfQueryDone(token);
+            assessQueryCompletion(token);
 
             // All queries are done, show the view.
-            if (mCurrentQuery == TOKEN_QUERY_ALL) {
+            if (mCurrentQuery == TOKEN_QUERY_ALL && !mInNonUiMode) {
                 if (mLoadingMsgView.getAlpha() == 1) {
                     // Loading message is showing, let it stay a bit more (to prevent
                     // flashing) by adding a start delay to the event animation
@@ -637,10 +660,18 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
         }
     }
 
-    private void sendAccessibilityEventIfQueryDone(int token) {
+    private void assessQueryCompletion(int token) {
         mCurrentQuery |= token;
         if (mCurrentQuery == TOKEN_QUERY_ALL) {
-            sendAccessibilityEvent();
+
+            // signal query completion
+            if (mQueryCompleteRunnable != null) {
+                mActivity.runOnUiThread(mQueryCompleteRunnable);
+            }
+            if (!mInNonUiMode) {
+                sendAccessibilityEvent();
+            }
+
         }
     }
 
@@ -688,6 +719,10 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
         mEventId = eventId;
     }
 
+    public void launchInNonUiMode() {
+        mInNonUiMode = true;
+    }
+
     @Override
     public void onActivityCreated(Bundle savedInstanceState) {
         super.onActivityCreated(savedInstanceState);
@@ -726,6 +761,10 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
         if (mColorPickerDialog != null) {
             mColorPickerDialog.setOnColorSelectedListener(this);
         }
+    }
+
+    public void setQueryCompleteRunnable(Runnable runnable) {
+        mQueryCompleteRunnable = runnable;
     }
 
     private void applyDialogParams() {
@@ -859,6 +898,21 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
         }
     }
 
+    /**
+     * Initiate the querying of the calendar event data.
+     * For when this component is started in a non-ui mode
+     */
+    public void startQueryingData(Context context) {
+        mContext = context;
+        if (context instanceof Activity) {
+            mActivity = (Activity) context;
+        }
+
+        mHandler = new QueryHandler(context);
+        mHandler.startQuery(TOKEN_QUERY_EVENT, null, mUri, EVENT_PROJECTION,
+                null, null, null);
+    }
+
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
             Bundle savedInstanceState) {
@@ -869,6 +923,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
                     DIALOG_WINDOW_STYLE);
             mDeleteDialogVisible =
                 savedInstanceState.getBoolean(BUNDLE_KEY_DELETE_DIALOG_VISIBLE,false);
+            mDeleteDialogChoice = savedInstanceState.getInt(BUNDLE_KEY_DELETE_DIALOG_CHOICE, -1);
             mCalendarColor = savedInstanceState.getInt(BUNDLE_KEY_CALENDAR_COLOR);
             mCalendarColorInitialized =
                     savedInstanceState.getBoolean(BUNDLE_KEY_CALENDAR_COLOR_INIT);
@@ -1100,7 +1155,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
                         // Overwrites the one from Event table if available
                         if (!TextUtils.isEmpty(name)) {
                             mEventOrganizerDisplayName = name;
-                            if (!mIsOrganizer) {
+                            if (!mIsOrganizer && view != null) {
                                 setVisibilityCommon(view, R.id.organizer_container, View.VISIBLE);
                                 setTextCommon(view, R.id.organizer, mEventOrganizerDisplayName);
                             }
@@ -1148,7 +1203,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
                 } while (mAttendeesCursor.moveToNext());
                 mAttendeesCursor.moveToFirst();
 
-                updateAttendees(view);
+                if (view != null) updateAttendees(view);
             }
         }
     }
@@ -1169,6 +1224,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
         outState.putInt(BUNDLE_KEY_CURRENT_COLOR, mCurrentColor);
         outState.putBoolean(BUNDLE_KEY_CURRENT_COLOR_INIT, mCurrentColorInitialized);
         outState.putInt(BUNDLE_KEY_CURRENT_COLOR_KEY, mCurrentColorKey);
+        outState.putInt(BUNDLE_KEY_DELETE_DIALOG_CHOICE, mDeleteDialogChoice);
 
         // We'll need the temporary response for configuration changes.
         outState.putInt(BUNDLE_KEY_TENTATIVE_USER_RESPONSE, mTentativeUserSetResponse);
@@ -1254,7 +1310,9 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
         } else if (itemId == R.id.info_action_change_color) {
             showEventColorPickerDialog();
         } else if (itemId == R.id.info_action_share_event) {
-            shareEvent();
+            shareEvent(ShareType.INTENT);
+        } else if (itemId == R.id.info_action_export) {
+            shareEvent(ShareType.SDCARD);
         }
         return super.onOptionsItemSelected(item);
     }
@@ -1263,7 +1321,148 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
      * Generates an .ics formatted file with the event info and launches intent chooser to
      * share said file
      */
-    private void shareEvent() {
+    private void shareEvent(ShareType type) {
+        // Create the respective ICalendar objects from the event info
+        VCalendar calendar = new VCalendar();
+        calendar.addProperty(VCalendar.VERSION, "2.0");
+        calendar.addProperty(VCalendar.PRODID, VCalendar.PRODUCT_IDENTIFIER);
+        calendar.addProperty(VCalendar.CALSCALE, "GREGORIAN");
+        calendar.addProperty(VCalendar.METHOD, "REQUEST");
+
+        VEvent event = new VEvent();
+        mEventCursor.moveToFirst();
+        // Add event start and end datetime
+        if (!mAllDay) {
+            String eventTimeZone = mEventCursor.getString(EVENT_INDEX_EVENT_TIMEZONE);
+            event.addEventStart(mStartMillis, eventTimeZone);
+            event.addEventEnd(mEndMillis, eventTimeZone);
+        } else {
+            // All-day events' start and end time are stored as UTC.
+            // Treat the event start and end time as being in the local time zone and convert them
+            // to the corresponding UTC datetime. If the UTC time is used as is, the ical recipients
+            // will report the wrong start and end time (+/- 1 day) for the event as they will
+            // convert the UTC time to their respective local time-zones
+            String localTimeZone = Utils.getTimeZone(mActivity, mTZUpdater);
+            long eventStart = IcalendarUtils.convertTimeToUtc(mStartMillis, localTimeZone);
+            long eventEnd = IcalendarUtils.convertTimeToUtc(mEndMillis, localTimeZone);
+            event.addEventStart(eventStart, "UTC");
+            event.addEventEnd(eventEnd, "UTC");
+        }
+
+        event.addProperty(VEvent.LOCATION, mEventCursor.getString(EVENT_INDEX_EVENT_LOCATION));
+        event.addProperty(VEvent.DESCRIPTION, mEventCursor.getString(EVENT_INDEX_DESCRIPTION));
+        event.addProperty(VEvent.SUMMARY, mEventCursor.getString(EVENT_INDEX_TITLE));
+        event.addOrganizer(new Organizer(mEventOrganizerDisplayName, mEventOrganizerEmail));
+
+        // Add Attendees to event
+        for (Attendee attendee : mAcceptedAttendees) {
+            IcalendarUtils.addAttendeeToEvent(attendee, event);
+        }
+
+        for (Attendee attendee : mDeclinedAttendees) {
+            IcalendarUtils.addAttendeeToEvent(attendee, event);
+        }
+
+        for (Attendee attendee : mTentativeAttendees) {
+            IcalendarUtils.addAttendeeToEvent(attendee, event);
+        }
+
+        for (Attendee attendee : mNoResponseAttendees) {
+            IcalendarUtils.addAttendeeToEvent(attendee, event);
+        }
+
+        // Compose all of the ICalendar objects
+        calendar.addEvent(event);
+
+        // Create and share ics file
+        boolean isShareSuccessful = false;
+        try {
+            // Event title serves as the file name prefix
+            String filePrefix = calendar.getFirstEvent().getProperty(VEvent.SUMMARY);
+            if (filePrefix == null || filePrefix.length() < 3) {
+                // Default to a generic filename if event title doesn't qualify
+                // Prefix length constraint is imposed by File#createTempFile
+                filePrefix = "invite";
+            }
+
+            filePrefix = filePrefix.replaceAll("\\W+", " ");
+
+            if (!filePrefix.endsWith(" ")) {
+                filePrefix += " ";
+            }
+
+            File dir;
+            if (type == ShareType.SDCARD) {
+                dir = EXPORT_SDCARD_DIRECTORY;
+                if (!dir.exists()) {
+                    dir.mkdir();
+                }
+            } else {
+                dir = mActivity.getExternalCacheDir();
+            }
+
+            File inviteFile = IcalendarUtils.createTempFile(filePrefix, ".ics", dir);
+
+            if (IcalendarUtils.writeCalendarToFile(calendar, inviteFile)) {
+                if (type == ShareType.INTENT) {
+                    inviteFile.setReadable(true, false);     // Set world-readable
+                    Intent shareIntent = new Intent();
+                    shareIntent.setAction(Intent.ACTION_SEND);
+                    shareIntent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(inviteFile));
+                    // The ics file is sent as an extra, the receiving application decides whether
+                    // to parse the file to extract calendar events or treat it as a regular file
+                    shareIntent.setType("application/octet-stream");
+
+                    Intent chooserIntent = Intent.createChooser(shareIntent,
+                            getResources().getString(R.string.cal_share_intent_title));
+
+                    // The MMS app only responds to "text/x-vcalendar" so we create a chooser intent
+                    // that includes the targeted mms intent + any that respond to the above general
+                    // purpose "application/octet-stream" intent.
+                    File vcsInviteFile = File.createTempFile(filePrefix, ".vcs",
+                            mActivity.getExternalCacheDir());
+
+                    // For now, we are duplicating ics file and using that as the vcs file
+                    // TODO: revisit above
+                    if (IcalendarUtils.copyFile(inviteFile, vcsInviteFile)) {
+                        Intent mmsShareIntent = new Intent();
+                        mmsShareIntent.setAction(Intent.ACTION_SEND);
+                        mmsShareIntent.setPackage("com.android.mms");
+                        mmsShareIntent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(vcsInviteFile));
+                        mmsShareIntent.setType("text/x-vcalendar");
+                        chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS,
+                                new Intent[]{mmsShareIntent});
+                    }
+                    startActivity(chooserIntent);
+                } else {
+                    if (! mInNonUiMode) {
+                        String msg = getString(R.string.cal_export_succ_msg);
+                        Toast.makeText(mActivity, String.format(msg, inviteFile),
+                                Toast.LENGTH_SHORT).show();
+                    }
+                }
+                isShareSuccessful = true;
+
+            } else {
+                // Error writing event info to file
+                isShareSuccessful = false;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            isShareSuccessful = false;
+        }
+
+        if (!isShareSuccessful) {
+            Log.e(TAG, "Couldn't generate ics file");
+            Toast.makeText(mActivity, R.string.error_generating_ics, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * Creates a calendar object (VCalendar) that adheres to the ICalendar specification
+     */
+    public VCalendar generateVCalendar() {
+
         // Create the respective ICalendar objects from the event info
         VCalendar calendar = new VCalendar();
         calendar.addProperty(VCalendar.VERSION, "2.0");
@@ -1316,41 +1515,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
         // compose all of the ICalendar objects
         calendar.addEvent(event);
 
-        // create and share ics file
-        boolean isShareSuccessful = false;
-        try {
-            // event title serves as the file name prefix
-            String filePrefix = event.getProperty(VEvent.SUMMARY);
-            if (filePrefix == null || filePrefix.length() < 3) {
-                // default to a generic filename if event title doesn't qualify
-                // prefix length constraint is imposed by File#createTempFile
-                filePrefix = "invite";
-            }
-            File inviteFile = File.createTempFile(filePrefix, ".ics",
-                    mActivity.getExternalCacheDir());
-            if (IcalendarUtils.writeCalendarToFile(calendar, inviteFile)) {
-                inviteFile.setReadable(true,false);     // set world-readable
-                Intent shareIntent = new Intent();
-                shareIntent.setAction(Intent.ACTION_SEND);
-                shareIntent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(inviteFile));
-                // the ics file is sent as an extra, the receiving application decides whether to
-                // parse the file to extract calendar events or treat it as a regular file
-                shareIntent.setType("application/octet-stream");
-                startActivity(shareIntent);
-                isShareSuccessful = true;
-
-            } else {
-                // error writing event info to file
-                isShareSuccessful = false;
-            }
-        } catch (IOException e) {
-            isShareSuccessful = false;
-        }
-
-        if (!isShareSuccessful) {
-            Log.e(TAG, "Couldn't generate ics file");
-            Toast.makeText(mActivity, R.string.error_generating_ics, Toast.LENGTH_SHORT).show();
-        }
+        return calendar;
     }
 
     private void showEventColorPickerDialog() {
@@ -1864,12 +2029,15 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
                 mEventOrganizerDisplayName = mEventOrganizerEmail;
             }
 
-            if (!mIsOrganizer && !TextUtils.isEmpty(mEventOrganizerDisplayName)) {
-                setTextCommon(view, R.id.organizer, mEventOrganizerDisplayName);
-                setVisibilityCommon(view, R.id.organizer_container, View.VISIBLE);
-            } else {
-                setVisibilityCommon(view, R.id.organizer_container, View.GONE);
+            if (!mInNonUiMode) {
+                if (!mIsOrganizer && !TextUtils.isEmpty(mEventOrganizerDisplayName)) {
+                    setTextCommon(view, R.id.organizer, mEventOrganizerDisplayName);
+                    setVisibilityCommon(view, R.id.organizer_container, View.VISIBLE);
+                } else {
+                    setVisibilityCommon(view, R.id.organizer_container, View.GONE);
+                }
             }
+
             mHasAttendeeData = mEventCursor.getInt(EVENT_INDEX_HAS_ATTENDEE_DATA) != 0;
             mCanModifyCalendar = mEventCursor.getInt(EVENT_INDEX_ACCESS_LEVEL)
                     >= Calendars.CAL_ACCESS_CONTRIBUTOR;
@@ -1877,6 +2045,9 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
             mCanModifyEvent = mCanModifyCalendar && mIsOrganizer;
             mIsBusyFreeCalendar =
                     mEventCursor.getInt(EVENT_INDEX_ACCESS_LEVEL) == Calendars.CAL_ACCESS_FREEBUSY;
+
+            // no more work to be done if launched in non-ui mode
+            if (mInNonUiMode) return;
 
             if (!mIsBusyFreeCalendar) {
 
@@ -1917,8 +2088,8 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
                 mActivity.invalidateOptionsMenu();
             }
         } else {
-            setVisibilityCommon(view, R.id.calendar, View.GONE);
-            sendAccessibilityEventIfQueryDone(TOKEN_QUERY_DUPLICATE_CALENDARS);
+            if (!mInNonUiMode) setVisibilityCommon(view, R.id.calendar, View.GONE);
+            assessQueryCompletion(TOKEN_QUERY_DUPLICATE_CALENDARS);
         }
     }
 
@@ -2166,6 +2337,7 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
         // This is done to get the same behavior on OnResume since the AlertDialog is gone on
         // rotation but not if you press the HOME key
         if (mDeleteDialogVisible && mDeleteHelper != null) {
+            mDeleteDialogChoice = mDeleteHelper.getWhichDelete();
             mDeleteHelper.dismissAlertDialog();
             mDeleteHelper = null;
         }
@@ -2192,7 +2364,8 @@ public class EventInfoFragment extends DialogFragment implements OnCheckedChange
                     mContext, mActivity,
                     !mIsDialog && !mIsTabletConfig /* exitWhenDone */);
             mDeleteHelper.setOnDismissListener(createDeleteOnDismissListener());
-            mDeleteHelper.delete(mStartMillis, mEndMillis, mEventId, -1, onDeleteRunnable);
+            mDeleteHelper.delete(mStartMillis, mEndMillis,
+                                 mEventId, mDeleteDialogChoice, onDeleteRunnable);
         } else if (mTentativeUserSetResponse != Attendees.ATTENDEE_STATUS_NONE) {
             int buttonId = findButtonIdForResponse(mTentativeUserSetResponse);
             mResponseRadioGroup.check(buttonId);

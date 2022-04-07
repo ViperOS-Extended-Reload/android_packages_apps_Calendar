@@ -1,5 +1,17 @@
-/**
- * Copyright (C) 2014 The CyanogenMod Project
+/*
+ * Copyright (C) 2014-2016 The CyanogenMod Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package com.android.calendar.icalendar;
@@ -31,12 +43,20 @@ public class Organizer {
      */
     public String getICalFormattedString() {
         StringBuilder output = new StringBuilder();
-        // add the organizer info
+        // Add the organizer info
         output.append("ORGANIZER;CN=" + mName + ":mailto:" + mEmail);
-        // enforce line length constraints
+        // Enforce line length constraints
         output = IcalendarUtils.enforceICalLineLength(output);
         output.append("\n");
         return output.toString();
     }
 
+    public static Organizer populateFromICalString(String iCalFormattedString) {
+        // TODO: Add sanity checks
+        String[] organizer = iCalFormattedString.split(";");
+        String[] entries = organizer[1].split(":");
+        String name = entries[0].replace("CN=", "");
+        String email = entries[1].replace("mailto=", "");
+        return new Organizer(name, email);
+    }
 }
